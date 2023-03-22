@@ -1,14 +1,18 @@
 package com.example.reminders
 
-import android.app.Application
-import android.app.DatePickerDialog
-import android.app.TimePickerDialog
+import android.Manifest
+import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.Location
 import android.os.Bundle
 import android.widget.DatePicker
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -20,7 +24,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.rounded.Add
@@ -37,6 +40,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
@@ -44,6 +49,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.work.Data
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.google.android.gms.location.Geofence
+import com.google.android.gms.location.GeofencingRequest
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.rememberCameraPositionState
 import java.text.SimpleDateFormat
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -52,16 +66,32 @@ import java.time.format.DateTimeFormatter
 import java.util.*
 import java.util.concurrent.TimeUnit
 
-
 class MainActivity : ComponentActivity() {
 
-    //var showAll = mutableStateOf(false)
     var editReminderId = 0
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val sharedPref = getSharedPreferences("loginCredentials", MODE_PRIVATE)
         val loginMethod = sharedPref.getString("login_method", null)
+
+        val locSharedPref = getSharedPreferences("virtualLocation", MODE_PRIVATE)
+        val locEditor = locSharedPref.edit()
+
+        /*locEditor.apply {
+            val latDouble = 65.059167
+            putLong("lat", latDouble.toRawBits())
+            val lngDouble = 25.466111
+            putLong("lng", lngDouble.toRawBits())
+            apply()
+        }*/
+
+        val virtualLat = Double.fromBits(locSharedPref.getLong("lat", 0))
+        val virtualLng = Double.fromBits(locSharedPref.getLong("lng", 0))
+        println(virtualLat)
+        print(virtualLng)
+
+        val radiusInDegrees = 300 / 111000f
 
         setContent {
 
@@ -80,6 +110,49 @@ class MainActivity : ComponentActivity() {
                 var showAll by remember {
                     mutableStateOf(false)
                 }
+
+                var permissionGranted by remember {
+                    mutableStateOf(isPermissionGranted())
+                }
+
+                val permissionLauncher =
+                    rememberLauncherForActivityResult(contract = ActivityResultContracts.RequestPermission()) { permissionGranted_ ->
+                        Toast.makeText(
+                            this@MainActivity,
+                            "permissionGranted_ $permissionGranted_",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        permissionGranted = permissionGranted_
+                    }
+
+                /*Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colors.background
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Button(
+                            enabled = !permissionGranted,
+                            onClick = {
+                                if (!permissionGranted) {
+                                    permissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                                }
+                            }) {
+                            Text(text = if (permissionGranted) "Location tracking enabled" else "Enable location tracking")
+                        }
+
+                        if (permissionGranted) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "Permission granted",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }*/
 
                 Column {
                     TopAppBar(
@@ -109,6 +182,13 @@ class MainActivity : ComponentActivity() {
                             OverflowMenu {
                                 DropdownMenuItem(onClick = {
                                     val intent =
+                                        Intent(this@MainActivity, LocationActivity::class.java)
+                                    startActivity(intent)
+                                }) {
+                                    Text("Select location")
+                                }
+                                DropdownMenuItem(onClick = {
+                                    val intent =
                                         Intent(this@MainActivity, SettingsActivity::class.java)
                                     startActivity(intent)
                                 }) {
@@ -128,15 +208,22 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                ScreenSetup(viewModel, showAll)
+                ScreenSetup(viewModel, this@MainActivity, showAll, virtualLat, virtualLng)
             }
         }
+    }
+
+    private fun isPermissionGranted(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
     }
 
 }
 
 @Composable
-fun ScreenSetup(viewModel: MainViewModel, showAll: Boolean) {
+fun ScreenSetup(viewModel: MainViewModel, activity: Activity, showAll: Boolean, virtualLat: Double, virtualLng: Double) {
 
     val allReminders by viewModel.allReminders.observeAsState(listOf())
     val searchResults by viewModel.searchResults.observeAsState(listOf())
@@ -145,8 +232,11 @@ fun ScreenSetup(viewModel: MainViewModel, showAll: Boolean) {
         allReminders = allReminders,
         searchResults = searchResults,
         viewModel = viewModel,
+        activity = activity,
         context = LocalContext.current,
-        showAll = showAll
+        showAll = showAll,
+        virtualLat = virtualLat,
+        virtualLng = virtualLng
     )
 }
 
@@ -155,8 +245,11 @@ fun MainScreen(
     allReminders: List<Reminder>,
     searchResults: List<Reminder>,
     viewModel: MainViewModel,
+    activity: Activity,
     context: Context,
-    showAll: Boolean
+    showAll: Boolean,
+    virtualLat: Double,
+    virtualLng: Double
 ) {
 
     var reminderMessage by remember { mutableStateOf("") }
@@ -324,9 +417,9 @@ fun MainScreen(
                     Column() {
                         Text(
                             text = if (selectedDateText.isNotEmpty()) {
-                                "Due date: $selectedDateText"
+                                "Due date $selectedDateText"
                             } else {
-                                "Due date:"
+                                "Due date not selected"
                             }
                         )
 
@@ -353,9 +446,9 @@ fun MainScreen(
                     Column() {
                         Text(
                             text = if (selectedTimeText.isNotEmpty()) {
-                                "Due time: $selectedTimeText"
+                                "Due time $selectedTimeText"
                             } else {
-                                "Due time:"
+                                "Due time not selected"
                             }
                         )
 
@@ -379,6 +472,80 @@ fun MainScreen(
                         reminderTime = zdt.toInstant().toEpochMilli()
                     }
 
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    var reminderLatitude by remember { mutableStateOf(0.00) }
+                    var reminderLongitude by remember { mutableStateOf(0.00) }
+                    val openReminderLocationDialog = remember { mutableStateOf(false)  }
+
+                    Column() {
+                        Text(
+                            text = if (reminderLatitude != 0.00) {
+                                "Location not selected"
+                            } else {
+                                "Location selected"
+                            }
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                openReminderLocationDialog.value = true
+                            }
+                        ) {
+                            Text(text = "Select location")
+                        }
+                    }
+
+                    if (openReminderLocationDialog.value) {
+                        Dialog(
+                            onDismissRequest = {
+                                openReminderLocationDialog.value = false
+                            }
+                        ) {
+                            Surface(
+                                color = Color.White,
+                                modifier = Modifier
+                                    .fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                            ) {
+                                var markerPos by remember { mutableStateOf(LatLng(virtualLat, virtualLng)) }
+                                val cameraPositionState = rememberCameraPositionState {
+                                    position = CameraPosition.fromLatLngZoom(markerPos, 10f)
+                                }
+                                GoogleMap(
+                                    modifier = Modifier.fillMaxSize(),
+                                    cameraPositionState = cameraPositionState,
+                                    //properties = MapProperties(isMyLocationEnabled = true),
+                                    onMapClick = {
+                                        markerPos = it
+                                        println("latlong")
+                                        println(markerPos)
+                                    }
+                                ) {
+                                    Marker(
+                                        state = MarkerState(position = markerPos),
+                                        draggable = true,
+                                        title = "Reminder location"
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Row (modifier = Modifier
+                                    .fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End) {
+                                    TextButton(onClick = {openReminderLocationDialog.value = false },modifier = Modifier.padding(vertical = 0.dp, horizontal = 16.dp)) {
+                                        Text(text = "Cancel")
+                                    }
+                                    Button(onClick = {
+                                        openReminderLocationDialog.value = false
+                                        reminderLatitude = markerPos.latitude;
+                                        reminderLongitude = markerPos.longitude;
+                                    },modifier = Modifier.padding(vertical = 0.dp, horizontal = 0.dp)) {
+                                        Text(text = "OK")
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
                     Row (modifier = Modifier
                         .fillMaxWidth(),
@@ -395,8 +562,8 @@ fun MainScreen(
                                         rid,
                                         reminderMessage,
                                         selectedIcon,
-                                        "",
-                                        "",
+                                        reminderLatitude,
+                                        reminderLongitude,
                                         reminderTime,
                                         creationTime,
                                         0,
@@ -404,7 +571,8 @@ fun MainScreen(
                                     )
                                 )
                                 searching = false
-                                reminderNotification(context, reminderMessage, reminderTime, creationTime)
+                                reminderGeofence(activity, context, rid, reminderLatitude, reminderLongitude)
+                                reminderNotification(context, reminderMessage, reminderLatitude, reminderLongitude, reminderTime, creationTime)
                             }
                             openReminderDialog.value = false
                             reminderMessage = ""
@@ -432,35 +600,134 @@ fun MainScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     // Doesn't solve scroll area issues
                 }
-                println("Current")
-                println(System.currentTimeMillis())
-                print("Reminder")
-                println(reminder.reminder_time)
+                //print("Current time ")
+                //println(System.currentTimeMillis())
+                print("Time ")
+                println(reminder.reminder_time - System.currentTimeMillis())
                 if(System.currentTimeMillis() > reminder.reminder_time || showAll) {
-                    ReminderCard(
-                        id = reminder.rid,
-                        message = reminder.message,
-                        icon = reminder.icon,
-                        created = reminder.creation_time,
-                        viewModel
-                    )
+
+                    var reminderLat = reminder.location_x ?: virtualLat
+                    if(reminder.location_x == 0.00) {
+                        reminderLat = virtualLat
+                    }
+                    var reminderLng = reminder.location_y ?: virtualLng
+                    if(reminder.location_y == 0.00) {
+                        reminderLng = virtualLng
+                    }
+                    print("Lat ")
+                    println(reminderLat)
+                    print("Lng ")
+                    println(reminderLng)
+                    val distance = getDistanceBetween(reminderLat, reminderLng, virtualLat, virtualLng)
+                    print("Distance ")
+                    println(distance)
+                    if(300 > distance || showAll) {
+                        ReminderCard(
+                            id = reminder.rid,
+                            message = reminder.message,
+                            icon = reminder.icon,
+                            created = reminder.creation_time,
+                            viewModel
+                        )
+                    }
                 }
                 if(list.lastIndex == i) {
                     Spacer(modifier = Modifier.height(80.dp))
                 }
                 i++
+
             }
         }
     }
 }
 
-fun reminderNotification(context: Context, message: String, reminderTime: Long, creationTime: Long) {
+fun getDistanceBetween(
+    destinationLatitude: Double,
+    destinationLongitude: Double,
+    latitude: Double,
+    longitude: Double
+): Int {
+    val locationA = Location("point A")
+    locationA.latitude = destinationLatitude
+    locationA.longitude = destinationLongitude
+    val locationB = Location("point B")
+    locationB.latitude = latitude
+    locationB.longitude = longitude
+    val distance = locationA.distanceTo(locationB)
+    return distance.toInt()
+}
+
+fun reminderGeofence(activity: Activity, context: Context, rid: Int, reminderLatitude: Double, reminderLongitude: Double) {
+
+    val requestId = "request$rid"
+
+    val geofence = Geofence.Builder()
+        .setRequestId(requestId)
+        .setExpirationDuration(Geofence.NEVER_EXPIRE)
+        .setCircularRegion(reminderLatitude, reminderLongitude, 300F)
+        .setTransitionTypes(Geofence.GEOFENCE_TRANSITION_ENTER)
+        .build()
+
+    val geofencingRequest = GeofencingRequest.Builder().apply {
+        setInitialTrigger(GeofencingRequest.INITIAL_TRIGGER_ENTER)
+        addGeofence(geofence)
+    }.build()
+
+    val geofencePendingIntent: PendingIntent by lazy {
+        val intent = Intent(activity, GeofenceReceiver::class.java)
+        PendingIntent.getBroadcast(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+    }
+
+    val geofencingClient = LocationServices.getGeofencingClient(activity)
+
+    if (ActivityCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) != PackageManager.PERMISSION_GRANTED
+    ) {
+        // TODO: Consider calling
+        //    ActivityCompat#requestPermissions
+        // here to request the missing permissions, and then overriding
+        //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+        //                                          int[] grantResults)
+        // to handle the case where the user grants the permission. See the documentation
+        // for ActivityCompat#requestPermissions for more details.
+        return
+    }
+    geofencingClient.addGeofences(geofencingRequest, geofencePendingIntent).run {
+        addOnFailureListener {
+            println("addOnFailureListener")
+        }
+        addOnSuccessListener {
+            println("addOnSuccessListener")
+        }
+    }
+
+}
+
+fun geofenceReminderNotification(context: Context, rid: String) {
+
+    var reminderId = rid.filter { it.isDigit() }
+    val reminderWorkerRequest = OneTimeWorkRequestBuilder<ReminderWorker>()
+        .setInputData(
+            Data.Builder()
+                .putString("reminderMessage", "You've arrived in the location")
+                .build()
+        )
+        .build()
+    WorkManager.getInstance(context).enqueue(reminderWorkerRequest)
+
+}
+
+fun reminderNotification(context: Context, message: String, reminderLatitude: Double, reminderLongitude: Double, reminderTime: Long, creationTime: Long) {
 
     val delay = reminderTime - creationTime
     val reminderWorkerRequest = OneTimeWorkRequestBuilder<ReminderWorker>()
         .setInputData(
             Data.Builder()
                 .putString("reminderMessage", message)
+                .putDouble("reminderLatitude", reminderLatitude)
+                .putDouble("reminderLongitude", reminderLongitude)
                 .build()
         )
         .setInitialDelay(delay, TimeUnit.MILLISECONDS)
@@ -681,7 +948,7 @@ fun OverflowMenu(content: @Composable () -> Unit) {
         showMenu = !showMenu
     }) {
         Icon(
-            imageVector = Icons.Outlined.MoreVert,
+            imageVector = Icons.Filled.MoreVert,
             contentDescription = "More",
         )
     }

@@ -3,25 +3,22 @@ package com.example.reminders
 import android.R
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.ContentResolver
 import android.content.Context
 import android.media.AudioAttributes
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat.getSystemService
 import androidx.work.*
-import java.io.File
+import com.google.android.gms.location.*
 
 
 class ReminderWorker(context: Context, workerParameters: WorkerParameters) :
     Worker(context, workerParameters)  {
 
+    private val geofencingClient: GeofencingClient = LocationServices.getGeofencingClient(context)
+
     override fun doWork(): Result {
         val reminderMessage = inputData.getString("reminderMessage")
-        //val reminderMessage = "Liibalaaba"
 
         showNotification(applicationContext, reminderMessage)
 

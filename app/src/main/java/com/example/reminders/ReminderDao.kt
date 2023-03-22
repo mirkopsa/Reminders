@@ -11,8 +11,8 @@ interface ReminderDao {
     @Insert
     fun insertReminder(reminder: Reminder)
 
-    @Query("SELECT * FROM reminders WHERE message = :message")
-    fun findReminder(message: String): List<Reminder>
+    @Query("SELECT * FROM reminders WHERE rid = :rid")
+    fun findReminder(rid: Int): List<Reminder>
 
     @Query("DELETE FROM reminders WHERE message = :message")
     fun deleteReminder(message: String)

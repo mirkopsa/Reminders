@@ -28,15 +28,15 @@ class ReminderRepository(private val reminderDao: ReminderDao) {
         }
     }
 
-    fun findReminder(message: String) {
+    fun findReminder(rid: Int) {
         coroutineScope.launch(Dispatchers.Main) {
-            searchResults.value = asyncFind(message).await()
+            searchResults.value = asyncFind(rid).await()
         }
     }
 
-    private fun asyncFind(message: String): Deferred<List<Reminder>?> =
+    private fun asyncFind(rid: Int): Deferred<List<Reminder>?> =
         coroutineScope.async(Dispatchers.IO) {
-            return@async reminderDao.findReminder(message)
+            return@async reminderDao.findReminder(rid)
         }
 
 }

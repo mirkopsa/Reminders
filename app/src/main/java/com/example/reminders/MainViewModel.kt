@@ -24,6 +24,10 @@ class MainViewModel(application: Application) : ViewModel() {
         repository.insertReminder(reminder)
     }
 
+    fun findReminder(rid: Int) {
+        repository.findReminder(rid)
+    }
+
     fun editReminder(rid: Int, message: String, icon: String) {
         repository.editReminder(rid, message, icon)
     }
